@@ -118,19 +118,24 @@ io.on('connection', (socket) => {
   });
 
   // Crear sala
-  socket.on('create-room', (data) => {
+socket.on('create-room', (data) => {
     console.log('🎪 Creando sala:', data.roomId);
-
+    
     const roomId = data.roomId || 'room-' + Math.random().toString(36).substr(2, 9);
     const duration = data.duration || 60;
 
+    // INICIAR TEMPORIZADOR GLOBAL si no está corriendo
+    if (!globalTimer) {
+        startGlobalTimer();
+    }
+
     rooms.set(roomId, {
-      id: roomId,
-      creator: socket.id,
-      users: [socket.id],
-      createdAt: Date.now(),
-      duration: duration,
-      timer: duration * 60
+        id: roomId,
+        creator: socket.id,
+        users: [socket.id],
+        createdAt: Date.now(),
+        duration: duration,
+        timer: duration * 60  // Convertir minutos a segundos
     });
 
     socket.join(roomId);
@@ -142,13 +147,18 @@ io.on('connection', (socket) => {
     user.isCreator = true;
 
     socket.emit('room-created', {
-      roomId: roomId,
-      duration: duration
+        roomId: roomId,
+        duration: duration
+    });
+
+    // Enviar tiempo inicial inmediatamente
+    socket.emit('timer-update', {
+        timeRemaining: duration * 60
     });
 
     updateUsersList(roomId);
-    console.log(`✅ Sala creada: ${roomId} por ${socket.id}`);
-  });
+    console.log(`✅ Sala creada: ${roomId} por ${socket.id} - Duración: ${duration}min`);
+});
 
   // Unirse a sala
   socket.on('join-room', (data) => {
