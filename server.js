@@ -161,15 +161,14 @@ socket.on('create-room', (data) => {
 });
 
   // Unirse a sala
-  socket.on('join-room', (data) => {
+socket.on('join-room', (data) => {
     console.log('🚪 Uniéndose a sala:', data.roomId);
-
     const roomId = data.roomId;
     const room = rooms.get(roomId);
 
     if (!room) {
-      socket.emit('room-not-found');
-      return;
+        socket.emit('room-not-found');
+        return;
     }
 
     socket.join(roomId);
@@ -181,47 +180,32 @@ socket.on('create-room', (data) => {
     user.name = data.username || user.name;
     user.isCreator = false;
 
-    // Notificar a otros usuarios
     socket.to(roomId).emit('user-joined', {
-      userId: socket.id,
-      username: user.name
+        userId: socket.id,
+        username: user.name
     });
 
-    // Enviar usuarios existentes al nuevo usuario
     const existingUsers = room.users.filter(id => id !== socket.id).map(id => {
-      const u = users.get(id);
-      return u ? {
-        id: u.id,
-        name: u.name,
-        isCreator: u.isCreator,
-        handRaised: u.handRaised,
-        audioEnabled: u.audioEnabled
-      } : null;
+        const u = users.get(id);
+        return u ? {
+            id: u.id,
+            name: u.name,
+            isCreator: u.isCreator,
+            handRaised: u.handRaised,
+            audioEnabled: u.audioEnabled
+        } : null;
     }).filter(Boolean);
 
     socket.emit('room-joined', {
-      roomId: roomId,
-      existingUsers: existingUsers,
-      duration: room.duration,
-      timeRemaining: room.timer
+        roomId: roomId,
+        existingUsers: existingUsers,
+        duration: room.duration,
+        timeRemaining: room.timer  // ⬅️ ENVIAR TIEMPO ACTUAL
     });
 
     updateUsersList(roomId);
     console.log(`✅ Usuario ${socket.id} se unió a ${roomId}`);
-  });
-
-  // Señalización WebRTC
-  socket.on('webrtc-signal', (data) => {
-    if (data.target && data.roomId) {
-      const room = rooms.get(data.roomId);
-      if (room && room.users.includes(data.target)) {
-        socket.to(data.target).emit('webrtc-signal', {
-          ...data,
-          sender: socket.id
-        });
-      }
-    }
-  });
+});
 
   // Actualizar nombre de usuario
   socket.on('update-username', (data) => {
