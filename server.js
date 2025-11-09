@@ -37,6 +37,49 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
+// TEMPORIZADOR GLOBAL - Agregar esto después de las declaraciones de Map
+let globalTimer = null;
+
+function startGlobalTimer() {
+    if (globalTimer) return;
+
+    globalTimer = setInterval(() => {
+        let hasActiveRooms = false;
+
+        for (const [roomId, room] of rooms) {
+            if (room.timer > 0) {
+                room.timer--;
+                hasActiveRooms = true;
+
+                io.to(roomId).emit('timer-update', {
+                    timeRemaining: room.timer
+                });
+
+                if (room.timer <= 0) {
+                    io.to(roomId).emit('room-time-ended');
+                    console.log(`🕒 Tiempo agotado para sala: ${roomId}`);
+
+                    // Limpiar sala cuando el tiempo termina
+                    room.users.forEach(userId => {
+                        const userSocket = io.sockets.sockets.get(userId);
+                        if (userSocket) {
+                            userSocket.leave(roomId);
+                        }
+                    });
+                    rooms.delete(roomId);
+                }
+            }
+        }
+
+        if (!hasActiveRooms) {
+            clearInterval(globalTimer);
+            globalTimer = null;
+            console.log('⏰ Temporizador global detenido (no hay salas activas)');
+        }
+    }, 1000);
+}
+
+
 // Almacenamiento en memoria
 const rooms = new Map();
 const users = new Map();
