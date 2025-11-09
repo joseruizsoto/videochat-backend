@@ -37,6 +37,11 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
+// Almacenamiento en memoria
+const rooms = new Map();
+const users = new Map();
+const sharedFiles = new Map();
+
 // TEMPORIZADOR GLOBAL - Agregar esto después de las declaraciones de Map
 let globalTimer = null;
 
@@ -78,12 +83,6 @@ function startGlobalTimer() {
         }
     }, 1000);
 }
-
-
-// Almacenamiento en memoria
-const rooms = new Map();
-const users = new Map();
-const sharedFiles = new Map();
 
 // Función para actualizar lista de usuarios
 function updateUsersList(roomId) {
