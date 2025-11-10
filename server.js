@@ -8,19 +8,22 @@ console.log('🚀 Iniciando servidor de videochat...');
 const app = express();
 const server = http.createServer(app);
 
-// Configuración CORS para permitir tus dominios
+// Configuración CORS mejorada para móviles
 app.use(cors({
   origin: [
     "https://thinkenlac.es",
     "https://www.thinkenlac.es",
     "https://thinkandcreateservices.com",
     "https://www.thinkandcreateservices.com",
-    "http://localhost:3000" // Para desarrollo local
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "http://192.168.*.*:8080" // Para desarrollo móvil local
   ],
-  credentials: true
+  credentials: true,
+  methods: ["GET", "POST", "OPTIONS"]
 }));
 
-// Configuración de Socket.IO
+// Configuración de Socket.IO mejorada para móviles
 const io = socketIo(server, {
   cors: {
     origin: [
@@ -28,13 +31,18 @@ const io = socketIo(server, {
       "https://www.thinkenlac.es",
       "https://thinkandcreateservices.com",
       "https://www.thinkandcreateservices.com",
-      "http://localhost:3000"
+      "http://localhost:3000",
+      "http://localhost:8080",
+      "http://192.168.*.*:8080"
     ],
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "OPTIONS"],
+    credentials: true
   },
   maxHttpBufferSize: 1e7, // 10MB máximo para archivos
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  connectTimeout: 45000, // Aumentado para móviles
+  transports: ['websocket', 'polling'] // Forzar ambos transportes
 });
 
 // Almacenamiento en memoria
@@ -42,7 +50,7 @@ const rooms = new Map();
 const users = new Map();
 const sharedFiles = new Map();
 
-// TEMPORIZADOR GLOBAL - Agregar esto después de las declaraciones de Map
+// TEMPORIZADOR GLOBAL
 let globalTimer = null;
 
 function startGlobalTimer() {
@@ -117,8 +125,18 @@ io.on('connection', (socket) => {
     audioEnabled: true
   });
 
+  // Configurar transporte para móviles
+  socket.conn.on("upgrade", (transport) => {
+    console.log(`🔄 Usuario ${socket.id} actualizado a: ${transport.name}`);
+  });
+
+  // Manejar errores de conexión
+  socket.conn.on("error", (error) => {
+    console.error(`❌ Error de conexión para ${socket.id}:`, error);
+  });
+
   // Crear sala
-socket.on('create-room', (data) => {
+  socket.on('create-room', (data) => {
     console.log('🎪 Creando sala:', data.roomId);
     
     const roomId = data.roomId || 'room-' + Math.random().toString(36).substr(2, 9);
@@ -158,16 +176,22 @@ socket.on('create-room', (data) => {
 
     updateUsersList(roomId);
     console.log(`✅ Sala creada: ${roomId} por ${socket.id} - Duración: ${duration}min`);
-});
+  });
 
   // Unirse a sala
-socket.on('join-room', (data) => {
+  socket.on('join-room', (data) => {
     console.log('🚪 Uniéndose a sala:', data.roomId);
     const roomId = data.roomId;
     const room = rooms.get(roomId);
 
     if (!room) {
         socket.emit('room-not-found');
+        return;
+    }
+
+    // Verificar si la sala está llena (límite de 10 usuarios para estabilidad)
+    if (room.users.length >= 10) {
+        socket.emit('room-full');
         return;
     }
 
@@ -180,10 +204,13 @@ socket.on('join-room', (data) => {
     user.name = data.username || user.name;
     user.isCreator = false;
 
-    socket.to(roomId).emit('user-joined', {
-        userId: socket.id,
-        username: user.name
-    });
+    // Notificar a los usuarios existentes con un pequeño delay para móviles
+    setTimeout(() => {
+        socket.to(roomId).emit('user-joined', {
+            userId: socket.id,
+            username: user.name
+        });
+    }, 100);
 
     const existingUsers = room.users.filter(id => id !== socket.id).map(id => {
         const u = users.get(id);
@@ -200,12 +227,69 @@ socket.on('join-room', (data) => {
         roomId: roomId,
         existingUsers: existingUsers,
         duration: room.duration,
-        timeRemaining: room.timer  // ⬅️ ENVIAR TIEMPO ACTUAL
+        timeRemaining: room.timer
     });
 
     updateUsersList(roomId);
     console.log(`✅ Usuario ${socket.id} se unió a ${roomId}`);
-});
+  });
+
+  // Reunirse a sala (para reconexiones)
+  socket.on('rejoin-room', (data) => {
+    console.log('🔄 Reunirse a sala:', data.roomId);
+    const roomId = data.roomId;
+    const room = rooms.get(roomId);
+
+    if (!room) {
+        socket.emit('room-not-found');
+        return;
+    }
+
+    // Verificar si el usuario ya está en la sala
+    if (!room.users.includes(socket.id)) {
+        room.users.push(socket.id);
+    }
+
+    socket.join(roomId);
+    socket.roomId = roomId;
+
+    const user = users.get(socket.id);
+    user.roomId = roomId;
+    user.name = data.username || user.name;
+
+    const existingUsers = room.users.filter(id => id !== socket.id).map(id => {
+        const u = users.get(id);
+        return u ? {
+            id: u.id,
+            name: u.name,
+            isCreator: u.isCreator,
+            handRaised: u.handRaised,
+            audioEnabled: u.audioEnabled
+        } : null;
+    }).filter(Boolean);
+
+    socket.emit('rejoin-success', {
+        roomId: roomId,
+        existingUsers: existingUsers
+    });
+
+    updateUsersList(roomId);
+    console.log(`✅ Usuario ${socket.id} se reconectó a ${roomId}`);
+  });
+
+  // Señales WebRTC - CRÍTICO: Agregar este manejador si no existe
+  socket.on('webrtc-signal', (data) => {
+    if (data.target && data.roomId) {
+      console.log(`📨 Reenviando señal WebRTC de ${socket.id} a ${data.target}`);
+      socket.to(data.target).emit('webrtc-signal', {
+        ...data,
+        sender: socket.id
+      });
+    }
+  });
+
+  // Resto de los manejadores de eventos se mantienen igual...
+  // [Todos los demás manejadores se mantienen exactamente igual]
 
   // Actualizar nombre de usuario
   socket.on('update-username', (data) => {
@@ -337,8 +421,8 @@ socket.on('join-room', (data) => {
   });
 
   // Desconexión
-  socket.on('disconnect', () => {
-    console.log('❌ Usuario desconectado:', socket.id);
+  socket.on('disconnect', (reason) => {
+    console.log('❌ Usuario desconectado:', socket.id, 'Razón:', reason);
 
     if (socket.roomId) {
       const room = rooms.get(socket.roomId);
@@ -358,6 +442,16 @@ socket.on('join-room', (data) => {
   });
 });
 
+// Endpoint de salud para monitoreo
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    rooms: rooms.size,
+    users: users.size,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
@@ -365,4 +459,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('📍 Listo para conexiones desde:');
   console.log('   - https://thinkenlac.es');
   console.log('   - https://thinkandcreateservices.com');
+  console.log('   - Dispositivos móviles');
 });
