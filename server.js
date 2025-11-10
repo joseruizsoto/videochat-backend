@@ -277,7 +277,7 @@ io.on('connection', (socket) => {
     console.log(`✅ Usuario ${socket.id} se reconectó a ${roomId}`);
   });
 
-  // Señales WebRTC - CRÍTICO: Agregar este manejador si no existe
+  // Señales WebRTC
   socket.on('webrtc-signal', (data) => {
     if (data.target && data.roomId) {
       console.log(`📨 Reenviando señal WebRTC de ${socket.id} a ${data.target}`);
@@ -287,9 +287,6 @@ io.on('connection', (socket) => {
       });
     }
   });
-
-  // Resto de los manejadores de eventos se mantienen igual...
-  // [Todos los demás manejadores se mantienen exactamente igual]
 
   // Actualizar nombre de usuario
   socket.on('update-username', (data) => {
@@ -331,6 +328,29 @@ io.on('connection', (socket) => {
         userName: user.name
       });
       updateUsersList(user.roomId);
+    }
+  });
+
+  // Control de audio por creador
+  socket.on('creator-toggle-audio', (data) => {
+    const room = rooms.get(data.roomId);
+    if (room && room.creator === socket.id) {
+      // Enviar a todos los usuarios de la sala excepto al creador
+      socket.to(data.roomId).emit('audio-toggled-by-creator', {
+        audioEnabled: data.audioEnabled
+      });
+
+      // Actualizar estado de audio de todos los usuarios en la sala
+      room.users.forEach(userId => {
+        if (userId !== socket.id) {
+          const user = users.get(userId);
+          if (user) {
+            user.audioEnabled = data.audioEnabled;
+          }
+        }
+      });
+
+      updateUsersList(data.roomId);
     }
   });
 
