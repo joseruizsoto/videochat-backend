@@ -17,7 +17,7 @@ app.use(cors({
     "https://www.thinkandcreateservices.com",
     "http://localhost:3000",
     "http://localhost:8080",
-    "http://192.168.*.*:8080" // Para desarrollo móvil local
+    "http://192.168.*.*:8080"
   ],
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"]
@@ -38,17 +38,18 @@ const io = socketIo(server, {
     methods: ["GET", "POST", "OPTIONS"],
     credentials: true
   },
-  maxHttpBufferSize: 1e7, // 10MB máximo para archivos
+  maxHttpBufferSize: 1e7,
   pingTimeout: 60000,
   pingInterval: 25000,
-  connectTimeout: 45000, // Aumentado para móviles
-  transports: ['websocket', 'polling'] // Forzar ambos transportes
+  connectTimeout: 45000,
+  transports: ['websocket', 'polling']
 });
 
 // Almacenamiento en memoria
 const rooms = new Map();
 const users = new Map();
 const sharedFiles = new Map();
+const chatMessages = new Map(); // NUEVO: Almacenar mensajes del chat
 
 // TEMPORIZADOR GLOBAL
 let globalTimer = null;
@@ -80,6 +81,7 @@ function startGlobalTimer() {
                         }
                     });
                     rooms.delete(roomId);
+                    chatMessages.delete(roomId); // NUEVO: Limpiar mensajes del chat
                 }
             }
         }
@@ -109,6 +111,25 @@ function updateUsersList(roomId) {
   }).filter(Boolean);
 
   io.to(roomId).emit('users-list-updated', usersList);
+}
+
+// NUEVO: Función para obtener historial del chat
+function getChatHistory(roomId) {
+  if (!chatMessages.has(roomId)) {
+    chatMessages.set(roomId, []);
+  }
+  return chatMessages.get(roomId);
+}
+
+// NUEVO: Función para agregar mensaje al chat
+function addChatMessage(roomId, messageData) {
+  const history = getChatHistory(roomId);
+  history.push(messageData);
+  
+  // Mantener solo los últimos 100 mensajes por sala
+  if (history.length > 100) {
+    history.shift();
+  }
 }
 
 // Manejo de conexiones Socket.IO
@@ -142,7 +163,6 @@ io.on('connection', (socket) => {
     const roomId = data.roomId || 'room-' + Math.random().toString(36).substr(2, 9);
     const duration = data.duration || 60;
 
-    // INICIAR TEMPORIZADOR GLOBAL si no está corriendo
     if (!globalTimer) {
         startGlobalTimer();
     }
@@ -153,8 +173,11 @@ io.on('connection', (socket) => {
         users: [socket.id],
         createdAt: Date.now(),
         duration: duration,
-        timer: duration * 60  // Convertir minutos a segundos
+        timer: duration * 60
     });
+
+    // NUEVO: Inicializar historial de chat para la sala
+    chatMessages.set(roomId, []);
 
     socket.join(roomId);
     socket.roomId = roomId;
@@ -169,7 +192,6 @@ io.on('connection', (socket) => {
         duration: duration
     });
 
-    // Enviar tiempo inicial inmediatamente
     socket.emit('timer-update', {
         timeRemaining: duration * 60
     });
@@ -189,7 +211,6 @@ io.on('connection', (socket) => {
         return;
     }
 
-    // Verificar si la sala está llena (límite de 10 usuarios para estabilidad)
     if (room.users.length >= 10) {
         socket.emit('room-full');
         return;
@@ -204,7 +225,6 @@ io.on('connection', (socket) => {
     user.name = data.username || user.name;
     user.isCreator = false;
 
-    // Notificar a los usuarios existentes con un pequeño delay para móviles
     setTimeout(() => {
         socket.to(roomId).emit('user-joined', {
             userId: socket.id,
@@ -223,11 +243,15 @@ io.on('connection', (socket) => {
         } : null;
     }).filter(Boolean);
 
+    // NUEVO: Enviar historial del chat al usuario que se une
+    const chatHistory = getChatHistory(roomId);
+    
     socket.emit('room-joined', {
         roomId: roomId,
         existingUsers: existingUsers,
         duration: room.duration,
-        timeRemaining: room.timer
+        timeRemaining: room.timer,
+        chatHistory: chatHistory // NUEVO: Incluir historial del chat
     });
 
     updateUsersList(roomId);
@@ -245,7 +269,6 @@ io.on('connection', (socket) => {
         return;
     }
 
-    // Verificar si el usuario ya está en la sala
     if (!room.users.includes(socket.id)) {
         room.users.push(socket.id);
     }
@@ -268,9 +291,13 @@ io.on('connection', (socket) => {
         } : null;
     }).filter(Boolean);
 
+    // NUEVO: Enviar historial del chat en reconexión
+    const chatHistory = getChatHistory(roomId);
+
     socket.emit('rejoin-success', {
         roomId: roomId,
-        existingUsers: existingUsers
+        existingUsers: existingUsers,
+        chatHistory: chatHistory
     });
 
     updateUsersList(roomId);
@@ -288,7 +315,49 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Actualizar nombre de usuario
+  // NUEVO: Manejo de mensajes de chat
+  socket.on('chat-message', (data) => {
+    const user = users.get(socket.id);
+    if (user && user.roomId) {
+      const messageData = {
+        id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+        userId: socket.id,
+        userName: user.name,
+        message: data.message,
+        timestamp: new Date().toISOString(),
+        type: 'text'
+      };
+
+      // Guardar mensaje en el historial
+      addChatMessage(user.roomId, messageData);
+
+      // Enviar a todos en la sala
+      io.to(user.roomId).emit('chat-message', messageData);
+      
+      console.log(`💬 Chat [${user.roomId}]: ${user.name}: ${data.message}`);
+    }
+  });
+
+  // NUEVO: Mensajes del sistema
+  socket.on('system-message', (data) => {
+    if (data.roomId) {
+      const messageData = {
+        id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+        userId: 'system',
+        userName: 'Sistema',
+        message: data.message,
+        timestamp: new Date().toISOString(),
+        type: 'system'
+      };
+
+      addChatMessage(data.roomId, messageData);
+      io.to(data.roomId).emit('chat-message', messageData);
+      
+      console.log(`🔔 Sistema [${data.roomId}]: ${data.message}`);
+    }
+  });
+
+  // Resto de los eventos existentes...
   socket.on('update-username', (data) => {
     const user = users.get(socket.id);
     if (user) {
@@ -307,7 +376,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Estado de pantalla compartida
   socket.on('screen-share-status', (data) => {
     if (data.roomId && data.userId) {
       socket.to(data.roomId).emit('screen-share-status', {
@@ -317,7 +385,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Mano levantada
   socket.on('toggle-hand', (data) => {
     const user = users.get(socket.id);
     if (user && user.roomId) {
@@ -331,30 +398,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Control de audio por creador
-  socket.on('creator-toggle-audio', (data) => {
-    const room = rooms.get(data.roomId);
-    if (room && room.creator === socket.id) {
-      // Enviar a todos los usuarios de la sala excepto al creador
-      socket.to(data.roomId).emit('audio-toggled-by-creator', {
-        audioEnabled: data.audioEnabled
-      });
-
-      // Actualizar estado de audio de todos los usuarios en la sala
-      room.users.forEach(userId => {
-        if (userId !== socket.id) {
-          const user = users.get(userId);
-          if (user) {
-            user.audioEnabled = data.audioEnabled;
-          }
-        }
-      });
-
-      updateUsersList(data.roomId);
-    }
-  });
-
-  // Archivos - Inicio de subida
   socket.on('file-upload-start', (data) => {
     if (data.roomId) {
       socket.to(data.roomId).emit('file-upload-started', {
@@ -365,7 +408,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Archivos - Progreso
   socket.on('file-upload-progress', (data) => {
     if (data.roomId) {
       socket.to(data.roomId).emit('file-upload-progress', {
@@ -376,7 +418,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Archivos - Completado
   socket.on('file-upload', (data) => {
     const fileId = Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 
@@ -404,7 +445,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Solicitud de descarga de archivo
   socket.on('file-download-request', (data) => {
     const fileData = sharedFiles.get(data.fileId);
     if (fileData) {
@@ -412,7 +452,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Abandonar sala
   socket.on('leave-room', (data) => {
     const roomId = data.roomId || socket.roomId;
     if (roomId) {
@@ -423,6 +462,7 @@ io.on('connection', (socket) => {
 
         if (room.users.length === 0) {
           rooms.delete(roomId);
+          chatMessages.delete(roomId); // NUEVO: Limpiar mensajes al eliminar sala
         } else {
           updateUsersList(roomId);
         }
@@ -440,7 +480,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Desconexión
   socket.on('disconnect', (reason) => {
     console.log('❌ Usuario desconectado:', socket.id, 'Razón:', reason);
 
@@ -452,6 +491,7 @@ io.on('connection', (socket) => {
 
         if (room.users.length === 0) {
           rooms.delete(socket.roomId);
+          chatMessages.delete(socket.roomId);
         } else {
           updateUsersList(socket.roomId);
         }
