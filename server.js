@@ -304,6 +304,11 @@ io.on('connection', (socket) => {
     console.log(`✅ Usuario ${socket.id} se reconectó a ${roomId}`);
   });
 
+  //avatar
+  socket.to(roomId).emit('user-avatar-joined', {
+    userId: socket.id,
+    userName: user.name
+  });
   // Señales WebRTC
   socket.on('webrtc-signal', (data) => {
     if (data.target && data.roomId) {
