@@ -8,35 +8,76 @@ console.log('🚀 Iniciando servidor de videochat...');
 const app = express();
 const server = http.createServer(app);
 
-// Configuración CORS mejorada para móviles
+// Configuración CORS MEJORADA - MÁS FLEXIBLE
 app.use(cors({
-  origin: [
-    "https://thinkenlac.es",
-    "https://www.thinkenlac.es",
-    "https://thinkandcreateservices.com",
-    "https://www.thinkandcreateservices.com",
-    "http://localhost:3000",
-    "http://localhost:8080",
-    "http://192.168.*.*:8080"
-  ],
-  credentials: true,
-  methods: ["GET", "POST", "OPTIONS"]
-}));
-
-// Configuración de Socket.IO mejorada para móviles
-const io = socketIo(server, {
-  cors: {
-    origin: [
+  origin: function (origin, callback) {
+    // Permitir solicitudes sin origen (como apps móviles o Postman)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
       "https://thinkenlac.es",
       "https://www.thinkenlac.es",
-      "https://thinkandcreateservices.com",
+      "https://thinkandcreateservices.com", 
       "https://www.thinkandcreateservices.com",
       "http://localhost:3000",
       "http://localhost:8080",
-      "http://192.168.*.*:8080"
-    ],
+      "http://192.168.1.1:8080",
+      "http://192.168.1.2:8080",
+      "http://192.168.1.3:8080",
+      "http://192.168.0.1:8080",
+      "http://192.168.0.2:8080"
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      // También permitir cualquier subdominio de thinkenlac.es y thinkandcreateservices.com
+      if (origin.endsWith('.thinkenlac.es') || origin.endsWith('.thinkandcreateservices.com')) {
+        callback(null, true);
+      } else {
+        console.log('🔒 Origen CORS bloqueado:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
+}));
+
+// Middleware para manejar preflight requests
+app.options('*', cors());
+
+// Configuración de Socket.IO MEJORADA
+const io = socketIo(server, {
+  cors: {
+    origin: function (origin, callback) {
+      // Permitir solicitudes sin origen
+      if (!origin) return callback(null, true);
+      
+      const allowedOrigins = [
+        "https://thinkenlac.es",
+        "https://www.thinkenlac.es", 
+        "https://thinkandcreateservices.com",
+        "https://www.thinkandcreateservices.com",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://192.168.1.1:8080",
+        "http://192.168.1.2:8080"
+      ];
+      
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else if (origin.endsWith('.thinkenlac.es') || origin.endsWith('.thinkandcreateservices.com')) {
+        callback(null, true);
+      } else {
+        console.log('🔒 Origen Socket.IO bloqueado:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ["GET", "POST", "OPTIONS"],
-    credentials: true
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"]
   },
   maxHttpBufferSize: 1e7,
   pingTimeout: 60000,
@@ -49,7 +90,7 @@ const io = socketIo(server, {
 const rooms = new Map();
 const users = new Map();
 const sharedFiles = new Map();
-const chatMessages = new Map(); // NUEVO: Almacenar mensajes del chat
+const chatMessages = new Map();
 
 // TEMPORIZADOR GLOBAL
 let globalTimer = null;
@@ -81,7 +122,7 @@ function startGlobalTimer() {
                         }
                     });
                     rooms.delete(roomId);
-                    chatMessages.delete(roomId); // NUEVO: Limpiar mensajes del chat
+                    chatMessages.delete(roomId);
                 }
             }
         }
@@ -113,7 +154,7 @@ function updateUsersList(roomId) {
   io.to(roomId).emit('users-list-updated', usersList);
 }
 
-// NUEVO: Función para obtener historial del chat
+// Función para obtener historial del chat
 function getChatHistory(roomId) {
   if (!chatMessages.has(roomId)) {
     chatMessages.set(roomId, []);
@@ -121,7 +162,7 @@ function getChatHistory(roomId) {
   return chatMessages.get(roomId);
 }
 
-// NUEVO: Función para agregar mensaje al chat
+// Función para agregar mensaje al chat
 function addChatMessage(roomId, messageData) {
   const history = getChatHistory(roomId);
   history.push(messageData);
@@ -176,7 +217,7 @@ io.on('connection', (socket) => {
         timer: duration * 60
     });
 
-    // NUEVO: Inicializar historial de chat para la sala
+    // Inicializar historial de chat para la sala
     chatMessages.set(roomId, []);
 
     socket.join(roomId);
@@ -243,7 +284,7 @@ io.on('connection', (socket) => {
         } : null;
     }).filter(Boolean);
 
-    // NUEVO: Enviar historial del chat al usuario que se une
+    // Enviar historial del chat al usuario que se une
     const chatHistory = getChatHistory(roomId);
     
     socket.emit('room-joined', {
@@ -251,7 +292,7 @@ io.on('connection', (socket) => {
         existingUsers: existingUsers,
         duration: room.duration,
         timeRemaining: room.timer,
-        chatHistory: chatHistory // NUEVO: Incluir historial del chat
+        chatHistory: chatHistory
     });
 
     updateUsersList(roomId);
@@ -291,7 +332,7 @@ io.on('connection', (socket) => {
         } : null;
     }).filter(Boolean);
 
-    // NUEVO: Enviar historial del chat en reconexión
+    // Enviar historial del chat en reconexión
     const chatHistory = getChatHistory(roomId);
 
     socket.emit('rejoin-success', {
@@ -304,11 +345,6 @@ io.on('connection', (socket) => {
     console.log(`✅ Usuario ${socket.id} se reconectó a ${roomId}`);
   });
 
-  //avatar
-  socket.to(roomId).emit('user-avatar-joined', {
-    userId: socket.id,
-    userName: user.name
-  });
   // Señales WebRTC
   socket.on('webrtc-signal', (data) => {
     if (data.target && data.roomId) {
@@ -320,7 +356,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // NUEVO: Manejo de mensajes de chat
+  // Manejo de mensajes de chat
   socket.on('chat-message', (data) => {
     const user = users.get(socket.id);
     if (user && user.roomId) {
@@ -343,7 +379,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // NUEVO: Mensajes del sistema
+  // Mensajes del sistema
   socket.on('system-message', (data) => {
     if (data.roomId) {
       const messageData = {
@@ -467,7 +503,7 @@ io.on('connection', (socket) => {
 
         if (room.users.length === 0) {
           rooms.delete(roomId);
-          chatMessages.delete(roomId); // NUEVO: Limpiar mensajes al eliminar sala
+          chatMessages.delete(roomId);
         } else {
           updateUsersList(roomId);
         }
@@ -517,12 +553,32 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Endpoint raíz
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'VideoChat Backend está funcionando',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Middleware para manejar errores CORS
+app.use((err, req, res, next) => {
+  if (err.message === 'Not allowed by CORS') {
+    res.status(403).json({ error: 'CORS no permitido para este origen' });
+  } else {
+    next(err);
+  }
+});
+
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend de videochat ejecutándose en puerto ${PORT}`);
   console.log('📍 Listo para conexiones desde:');
   console.log('   - https://thinkenlac.es');
+  console.log('   - https://www.thinkenlac.es');
   console.log('   - https://thinkandcreateservices.com');
   console.log('   - Dispositivos móviles');
+  console.log('🔧 Configuración CORS activada');
 });
