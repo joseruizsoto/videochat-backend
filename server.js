@@ -176,7 +176,7 @@ function addChatMessage(roomId, messageData) {
 // Manejo de conexiones Socket.IO
 io.on('connection', (socket) => {
   console.log('🔌 Nuevo usuario conectado:', socket.id);
-
+  
   // Registrar usuario
   users.set(socket.id, {
     id: socket.id,
@@ -185,6 +185,14 @@ io.on('connection', (socket) => {
     isCreator: false,
     handRaised: false,
     audioEnabled: true
+  });
+
+  socket.on('ping', (data) => {
+    // Simplemente responder con pong para mantener la conexión activa
+    socket.emit('pong', { 
+        timestamp: data.timestamp,
+        serverTime: Date.now() 
+    });
   });
 
   // Configurar transporte para móviles
